@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Space Runner - Telegram</title>
+    <style>
+        * { 
+            margin: 0; padding: 0; box-sizing: border-box; 
+            -webkit-tap-highlight-color: transparent; 
+            -webkit-user-select: none; user-select: none; 
+        }
+        body { 
+            background: #000; 
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+            overflow: hidden; touch-action: none; 
+            height: 100vh; display: flex; flex-direction: column; 
+        }
+        .game-container { 
+            flex: 1; display: flex; flex-direction: column; 
+            max-width: 100%; margin: 0 auto; position: relative; 
+        }
+        .game-header { 
+            padding: 15px; text-align: center; 
+            background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(10px); 
+            border-bottom: 1px solid #333; 
+        }
+        .game-title { 
+            color: #fff; font-size: 1.5rem; font-weight: bold; 
+            margin-bottom: 5px; text-shadow: 0 0 10px #00ffff; 
+        }
+        .game-stats { 
+            display: flex; justify-content: space-around; 
+            color: #fff; font-size: 1rem; 
+        }
+        .stat { 
+            background: rgba(255, 255, 255, 0.1); 
+            padding: 5px 15px; border-radius: 20px; 
+            backdrop-filter: blur(5px); border: 1px solid #333; 
+        }
+        #gameCanvas { 
+            flex: 1; width: 100%; background: #000; display: block; 
+            cursor: pointer;
+        }
+        /* REMOVED CONTROLS SECTION */
+        .game-over, .start-screen { 
+            position: absolute; top: 50%; left: 50%; 
+            transform: translate(-50%, -50%); 
+            background: rgba(0, 0, 0, 0.9); padding: 30px; 
+            border-radius: 20px; text-align: center; 
+            box-shadow: 0 0 50px rgba(0, 255, 255, 0.3); 
+            backdrop-filter: blur(10px); border: 2px solid #00ffff; 
+            color: white; max-width: 90%; 
+        }
+        .game-over h2, .start-screen h2 { 
+            color: #00ffff; margin-bottom: 15px; 
+            font-size: 1.8rem; text-shadow: 0 0 10px #00ffff; 
+        }
+        .restart-btn, .start-btn { 
+            background: linear-gradient(45deg, #00ffff, #0088ff); 
+            color: black; border: none; padding: 12px 30px; 
+            border-radius: 25px; font-size: 1.1rem; margin-top: 15px; 
+            cursor: pointer; font-weight: bold; 
+        }
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            color: #00ffff;
+            font-size: 0.9rem;
+            text-shadow: 0 0 5px #00ffff;
+        }
+        @media (max-width: 480px) { 
+            .game-title { font-size: 1.3rem; } 
+            .stat { font-size: 0.9rem; padding: 4px 12px; }
+            .instructions { font-size: 0.8rem; bottom: 15px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="game-header">
+            <div class="game-title">👨‍🚀 Space Runner</div>
+            <div class="game-stats">
+                <div class="stat">Score: <span id="score">0</span></div>
+                <div class="stat">High: <span id="highScore">0</span></div>
+                <div class="stat">Speed: <span id="speed">1.25</span>x</div>
+            </div>
+        </div>
+        
+        <canvas id="gameCanvas"></canvas>
+        
+        <!-- REMOVED CONTROLS DIV -->
+        
+        <div class="start-screen" id="startScreen">
+            <h2>👨‍🚀 Space Runner</h2>
+            <p>Tap anywhere to jump</p>
+            <p>Swipe down to duck</p>
+            <p>Avoid asteroids and satellites</p>
+            <button class="start-btn" id="startBtn">Start Mission</button>
+        </div>
+        
+        <div class="game-over" id="gameOver">
+            <h2>Mission Complete! 🎯</h2>
+            <p>Your Score: <span id="finalScore">0</span> light years</p>
+            <p>Personal Best: <span id="finalHighScore">0</span> light years</p>
+            <p id="newHighScore" style="color: #00ff00; display: none;">🎉 New High Score! 🎉</p>
+            <button class="restart-btn" id="restartButton">Try Again</button>
+        </div>
+
+        <div class="instructions" id="instructions">
+            Tap to jump • Swipe down to duck
+        </div>
+    </div>
+
+    <script>
+        // Telegram Web App integration
+        const tg = window.Telegram?.WebApp;
+        
+        if (tg) {
+            tg.expand();
+            tg.enableClosingConfirmation();
+        }
+
+        // Backend API configuration - UPDATE THIS URL AFTER DEPLOYMENT
+        const API_BASE = 'https://your-app.herokuapp.com/api';
+
+        // Game elements
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const highScoreElement = document.getElementById('highScore');
+        const speedElement = document.getElementById('speed');
+        const gameOverElement = document.getElementById('gameOver');
+        const finalScoreElement = document.getElementById('finalScore');
+        const finalHighScoreElement = document.getElementById('finalHighScore');
+        const restartButton = document.getElementById('restartButton');
+        const startScreen = document.getElementById('startScreen');
+        const startBtn = document.getElementById('startBtn');
+        const instructions = document.getElementById('instructions');
+
+        // Game state - INCREASED BASE SPEED TO 1.25x
+        let gameRunning = false;
+        let score = 0;
+        let highScore = localStorage.getItem('spaceHighScore') || 0;
+        let gameSpeed = 1.25; // CHANGED FROM 1.0 to 1.25
+        let frames = 0;
+        let userData = null;
+
+        // Astronaut properties
+        const astronaut = {
+            x: 80,
+            y: 0,
+            width: 45,
+            height: 45,
+            jumping: false,
+            ducking: false,
+            jumpVelocity: 0,
+            gravity: 0.5,
+            jumpPower: -13,
+            groundY: 0
+        };
+
+        // Game objects
+        let obstacles = [];
+        let stars = [];
+        let planets = [];
+
+        // Resize canvas for mobile
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight - 120; // Adjusted for header only
+            astronaut.groundY = canvas.height - 70;
+            astronaut.y = astronaut.groundY;
+        }
+
+        // Initialize Telegram user data
+        if (tg && tg.initDataUnsafe?.user) {
+            userData = tg.initDataUnsafe.user;
+            loadUserHighScore();
+        }
+
+        // Load user's high score from backend
+        async function loadUserHighScore() {
+            if (!userData) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/user_stats/${userData.id}`);
+                const data = await response.json();
+                
+                if (data.score) {
+                    highScore = Math.max(highScore, data.score);
+                    updateScoreDisplay();
+                }
+            } catch (error) {
+                console.log('Could not load high score:', error);
+            }
+        }
+
+        // Save score to backend
+        async function saveScore(score) {
+            if (!userData) return;
+            
+            try {
+                await fetch(`${API_BASE}/score`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: userData.id,
+                        username: userData.username,
+                        first_name: userData.first_name,
+                        score: score
+                    })
+                });
+            } catch (error) {
+                console.log('Failed to save score:', error);
+            }
+        }
+
+        // Initialize game
+        function init() {
+            score = 0;
+            gameSpeed = 1.25; // CHANGED FROM 1.0 to 1.25
+            frames = 0;
+            obstacles = [];
+            stars = [];
+            planets = [];
+            astronaut.y = astronaut.groundY;
+            astronaut.jumping = false;
+            astronaut.ducking = false;
+            astronaut.jumpVelocity = 0;
+            
+            // Create stars
+            for (let i = 0; i < 50; i++) {
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: Math.random() * 2 + 1,
+                    speed: Math.random() * 0.5 + 0.1
+                });
+            }
+            
+            // Create planets
+            for (let i = 0; i < 2; i++) {
+                planets.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * 100 + 20,
+                    size: Math.random() * 30 + 20,
+                    speed: Math.random() * 0.2 + 0.1
+                });
+            }
+            
+            updateScoreDisplay();
+            gameRunning = true;
+            gameOverElement.style.display = 'none';
+            startScreen.style.display = 'none';
+            instructions.style.display = 'block';
+        }
+
+        // Draw stars
+        function drawStars() {
+            ctx.fillStyle = '#ffffff';
+            for (let star of stars) {
+                ctx.globalAlpha = 0.8;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        // Draw planets
+        function drawPlanets() {
+            for (let planet of planets) {
+                ctx.fillStyle = '#4a148c';
+                ctx.beginPath();
+                ctx.arc(planet.x, planet.y, planet.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Update background
+        function updateBackground() {
+            for (let star of stars) {
+                star.x -= star.speed * gameSpeed;
+                if (star.x + star.size < 0) {
+                    star.x = canvas.width + star.size;
+                    star.y = Math.random() * canvas.height;
+                }
+            }
+            
+            for (let planet of planets) {
+                planet.x -= planet.speed * gameSpeed;
+                if (planet.x + planet.size < 0) {
+                    planet.x = canvas.width + planet.size;
+                    planet.y = Math.random() * 100 + 20;
+                }
+            }
+        }
+
+        // Draw astronaut
+        function drawAstronaut() {
+            ctx.font = `${astronaut.height}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            if (astronaut.jumping && frames % 10 < 5) {
+                ctx.fillStyle = '#ff4444';
+                ctx.fillText('🔥', astronaut.x + astronaut.width/2, astronaut.y + astronaut.height + 10);
+            }
+            
+            ctx.fillStyle = '#ffffff';
+            if (astronaut.ducking) {
+                ctx.fillText('👨‍🚀', astronaut.x + astronaut.width/2, astronaut.y + astronaut.height/2 + 8);
+            } else {
+                ctx.fillText('👨‍🚀', astronaut.x + astronaut.width/2, astronaut.y + astronaut.height/2);
+            }
+        }
+
+        // Draw platform
+        function drawPlatform() {
+            ctx.fillStyle = '#1a237e';
+            ctx.fillRect(0, astronaut.groundY + astronaut.height, canvas.width, canvas.height - astronaut.groundY - astronaut.height);
+            
+            ctx.strokeStyle = '#7c43bd';
+            ctx.lineWidth = 3;
+            for (let i = 0; i < canvas.width; i += 30) {
+                const offset = (frames * gameSpeed) % 30;
+                ctx.beginPath();
+                ctx.moveTo(i - offset, astronaut.groundY + astronaut.height + 5);
+                ctx.lineTo(i - offset + 15, astronaut.groundY + astronaut.height + 5);
+                ctx.stroke();
+            }
+        }
+
+        // Create obstacle
+        function createObstacle() {
+            const types = [
+                { emoji: '🌑', width: 35, height: 35, yOffset: 0 },
+                { emoji: '🪨', width: 40, height: 40, yOffset: 0 },
+                { emoji: '☄️', width: 50, height: 30, yOffset: 0 },
+                { emoji: '🛰️', width: 50, height: 25, yOffset: -50 },
+            ];
+            
+            const type = types[Math.floor(Math.random() * types.length)];
+            obstacles.push({
+                ...type,
+                x: canvas.width
+            });
+        }
+
+        // Draw obstacles
+        function drawObstacles() {
+            for (let obstacle of obstacles) {
+                ctx.font = `${obstacle.height}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    obstacle.emoji,
+                    obstacle.x + obstacle.width/2,
+                    astronaut.groundY + astronaut.height - obstacle.height/2 + obstacle.yOffset
+                );
+            }
+        }
+
+        // Update obstacles - INCREASED SPAWN RATE FOR FASTER PACE
+        function updateObstacles() {
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                obstacles[i].x -= 7 * gameSpeed; // CHANGED FROM 6 to 7
+                
+                if (obstacles[i].x + obstacles[i].width < 0) {
+                    obstacles.splice(i, 1);
+                }
+            }
+            
+            // INCREASED SPAWN RATE (from 90 to 75 frames)
+            if (frames % 75 === 0) {
+                createObstacle();
+            }
+        }
+
+        // Check collisions
+        function checkCollisions() {
+            for (let obstacle of obstacles) {
+                const charRight = astronaut.x + astronaut.width;
+                const charBottom = astronaut.y + (astronaut.ducking ? astronaut.height - 10 : astronaut.height);
+                const obstRight = obstacle.x + obstacle.width;
+                const obstBottom = astronaut.groundY + astronaut.height + obstacle.yOffset;
+                const obstTop = obstBottom - obstacle.height;
+                
+                if (astronaut.x < obstRight &&
+                    charRight > obstacle.x &&
+                    astronaut.y < obstBottom &&
+                    charBottom > obstTop) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Update astronaut
+        function updateAstronaut() {
+            if (astronaut.jumping) {
+                astronaut.y += astronaut.jumpVelocity;
+                astronaut.jumpVelocity += astronaut.gravity;
+                
+                if (astronaut.y >= astronaut.groundY) {
+                    astronaut.y = astronaut.groundY;
+                    astronaut.jumping = false;
+                    astronaut.jumpVelocity = 0;
+                }
+            }
+        }
+
+        // Jump function
+        function jump() {
+            if (!astronaut.jumping && !astronaut.ducking) {
+                astronaut.jumping = true;
+                astronaut.jumpVelocity = astronaut.jumpPower;
+            }
+        }
+
+        // Update score display
+        function updateScoreDisplay() {
+            scoreElement.textContent = score;
+            highScoreElement.textContent = highScore;
+            speedElement.textContent = gameSpeed.toFixed(1);
+        }
+
+        // Game over
+        async function gameOver() {
+            gameRunning = false;
+            instructions.style.display = 'none';
+            
+            const isNewHighScore = score > highScore;
+            if (isNewHighScore) {
+                highScore = score;
+                localStorage.setItem('spaceHighScore', highScore);
+                document.getElementById('newHighScore').style.display = 'block';
+                await saveScore(score);
+            }
+            
+            finalScoreElement.textContent = score;
+            finalHighScoreElement.textContent = highScore;
+            gameOverElement.style.display = 'block';
+        }
+
+        // Main game loop
+        function gameLoop() {
+            ctx.fillStyle = '#000011';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (gameRunning) {
+                frames++;
+                updateAstronaut();
+                updateObstacles();
+                updateBackground();
+                
+                if (frames % 8 === 0) {
+                    score++;
+                    // INCREASED SPEED INCREASE RATE (from 100 to 80 points)
+                    if (score % 80 === 0) {
+                        gameSpeed += 0.1;
+                    }
+                    updateScoreDisplay();
+                }
+                
+                if (checkCollisions()) {
+                    gameOver();
+                }
+            }
+            
+            drawStars();
+            drawPlanets();
+            drawPlatform();
+            drawAstronaut();
+            drawObstacles();
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // SIMPLIFIED EVENT LISTENERS - ONLY TAP AND SWIPE
+
+        startBtn.addEventListener('click', init);
+        restartButton.addEventListener('click', init);
+        
+        // Tap anywhere to jump
+        canvas.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (!gameRunning && frames === 0) {
+                init();
+            } else {
+                jump();
+            }
+        });
+
+        // Touch controls for mobile
+        let touchStartY = 0;
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchStartY = e.touches[0].clientY;
+            if (!gameRunning && frames === 0) {
+                init();
+            }
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (!gameRunning) return;
+            
+            const touchY = e.touches[0].clientY;
+            const deltaY = touchY - touchStartY;
+            
+            if (deltaY > 40) { // Swipe down to duck
+                astronaut.ducking = true;
+            }
+        });
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            if (!gameRunning) return;
+            
+            const touchY = e.changedTouches[0].clientY;
+            const deltaY = touchY - touchStartY;
+            
+            if (deltaY < -30) { // Swipe up to jump
+                jump();
+            }
+            astronaut.ducking = false;
+        });
+
+        // Keyboard support for testing
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.code === 'ArrowUp') {
+                if (!gameRunning && frames === 0) {
+                    init();
+                } else {
+                    jump();
+                }
+            }
+            if (e.code === 'ArrowDown') {
+                astronaut.ducking = true;
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowDown') {
+                astronaut.ducking = false;
+            }
+        });
+
+        // Initialize
+        window.addEventListener('load', () => {
+            resizeCanvas();
+            updateScoreDisplay();
+            instructions.style.display = 'none'; // Hide until game starts
+        });
+        
+        window.addEventListener('resize', resizeCanvas);
+
+        // Start game loop
+        gameLoop();
+    </script>
+</body>
+</html>
